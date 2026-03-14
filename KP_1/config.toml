@@ -1,0 +1,24 @@
+[nw]
+port = 2404
+max_clients = 8
+bind_ip = "0.0.0.0"
+allow_ip = ["192.168.2.52", "127.0.0.1"]
+
+[prot]
+ca = 2
+t3 = 10
+k = 12
+w = 8
+max_rx_buf = 16384
+
+[sim]
+sc = "sc.csv"
+
+[sg]
+addr = "signals.csv"
+
+
+[log]
+name = "DRV"
+lvl = "INFO"
+fname = "srv.log"

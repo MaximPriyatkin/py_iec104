@@ -1,0 +1,14 @@
+{
+    "signals": [
+        {
+            "id": 0,
+            "ioa": 0,
+            "asdu": "M_SP_NA_1"
+        },
+        {
+            "id": 1,
+            "ioa": 1,
+            "asdu": "M_ME_NA_1"
+        }        
+    ]
+}

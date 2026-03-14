@@ -1,0 +1,16 @@
+[nw]
+port = 2404
+max_clients = 8
+listen_ip = "0.0.0.0"
+
+[prot]
+t3 = 10
+k = 12
+w = 8
+
+[sim]
+sc = "data.txt"
+
+[log]
+lvl = "DEBUG"
+fname = "srv.log"
