@@ -26,11 +26,13 @@ class Conf():
     prot_k: int
     prot_w: int
     max_rx_buf: int
+    send_sleep: float  # пауза (с) после отправки I-кадра; > 0 снижает CPU на пакетировании
     sim_sc: str
     sg_addr: str
     log_lvl: str
     log_name: str
     log_fname: str
+    log_i_frame_stats_every: int  # интервал вывода в лог статистики I-frame (раз в N отправленных)
 
 
 def load_config(path="config.toml"):
@@ -46,11 +48,13 @@ def load_config(path="config.toml"):
         prot_k=data['prot']['k'],
         prot_w=data['prot']['w'],
         max_rx_buf=data['prot']['max_rx_buf'],
+        send_sleep=float(data['prot'].get('send_sleep', 0)),
         sim_sc=data['sim']['sc'],
         sg_addr = data['sg']['addr'],
         log_lvl=data['log']['lvl'],
         log_fname=data['log']['fname'],
-        log_name=data['log']['name'],        
+        log_name=data['log']['name'],
+        log_i_frame_stats_every=data['log'].get('i_frame_stats_every', 1000),
         )
 
 # ---- Логгирование ----
@@ -145,41 +149,33 @@ def create_data_storage():
             id = _ioa_idx.get(ioa)
         if id is None:
             return False
-        
         with _lock:
-            if id in _signals:
-                sg = _signals.get(id)
-                if not sg:
-                    return False
-                q_change = (new_q != sg.q)
-                val_change = False
-                if sg.threshold is not None:
-                    try:
-                        if abs(new_val - sg.val) >= sg.threshold:
-                            val_change = True
-                    except (TypeError, ValueError):
-                            val_change = (new_val != sg.val)
-                else:
-                    val_change =  (new_val != sg.val)
-                if not val_change and not q_change:
-                    return False
-                sg.ts = ts or datetime.now()
-                sg.val = new_val
-                sg.q = new_q
-
-                event = IecEvent(id=id, 
-                        ioa=sg.ioa, 
-                        asdu=sg.asdu, 
-                        val=sg.val, 
-                        ts=sg.ts, 
-                        q=sg.q)
-                if sg.asdu >=45: # не отправлять телеуправление после обновления состояния
-                    return True
-                for q in _subs.values():
-                    q.put(event)
-                return True
-            else:
+            sg = _signals.get(id)
+            if not sg:
                 return False
+            q_change = (new_q != sg.q)
+            val_change = False
+            if sg.threshold is not None:
+                try:
+                    if abs(new_val - sg.val) >= sg.threshold:
+                        val_change = True
+                except (TypeError, ValueError):
+                    val_change = (new_val != sg.val)
+            else:
+                val_change = (new_val != sg.val)
+            if not val_change and not q_change:
+                return False
+            sg.ts = ts or datetime.now()
+            sg.val = new_val
+            sg.q = new_q
+            event = IecEvent(id=id, ioa=sg.ioa, asdu=sg.asdu, val=sg.val, ts=sg.ts, q=sg.q)
+            if sg.asdu >= 45:
+                return True
+            targets = list(_subs.values())
+        for q in targets:
+            q.put_nowait(event)
+        return True
+
     def get_all():
         with _lock:
             return dict(_signals)
@@ -264,6 +260,8 @@ class ClientState:
     out_que: Optional[queue.Queue] = None
     on_command: Optional[Callable[[Any, int], None]] = None
     on_gi: Optional[Callable[[], Iterable[IecEvent]]] = None
+    rec_count_since_send: int = 0  # число принятых I-кадров без ответа (для отправки S по w)
+    last_ack_nr: int = 0  # последний N(R) от клиента — подтверждённые им наши I-кадры (для ограничения по k)
 
 def create_client_storage():
     _clients = {}

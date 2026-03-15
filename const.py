@@ -115,13 +115,66 @@ class AsduTypeId(IntEnum):
     F_SG_NA_1 = 0x7D   # Сегмент
     F_DR_TA_1 = 0x7E   # Каталог
 
+# Типы с целочисленным значением (дискретные, команды ТУ и т.п.)
 INT_ASDU = (
-   AsduTypeId.M_SP_TB_1,
-   AsduTypeId.C_SC_NA_1,
+    AsduTypeId.M_SP_NA_1,
+    AsduTypeId.M_DP_NA_1,
+    AsduTypeId.M_SP_TB_1,
+    AsduTypeId.M_DP_TB_1,
+    AsduTypeId.C_SC_NA_1,
+    AsduTypeId.C_DC_NA_1,
+    AsduTypeId.C_RC_NA_1,
+    AsduTypeId.C_SC_TA_1,
+    AsduTypeId.C_DC_TA_1,
+    AsduTypeId.C_RC_TA_1,
+    AsduTypeId.C_BO_NA_1,
+    AsduTypeId.C_BO_TA_1,
+    AsduTypeId.C_IC_NA_1,
+    AsduTypeId.C_CI_NA_1,
+    AsduTypeId.C_RD_NA_1,
+    AsduTypeId.C_CS_NA_1,
+    AsduTypeId.C_TS_NA_1,
+    AsduTypeId.C_RP_NA_1,
+    AsduTypeId.C_CD_NA_1,
+    AsduTypeId.C_TS_TA_1,
 )
 
+# Типы с плавающим значением (ТИ, ТР)
 FLOAT_ASDU = (
+    AsduTypeId.M_ME_NC_1,
     AsduTypeId.M_ME_TF_1,
+    AsduTypeId.C_SE_NA_1,
+    AsduTypeId.C_SE_NB_1,
+    AsduTypeId.C_SE_NC_1,
+    AsduTypeId.C_SE_TA_1,
+    AsduTypeId.C_SE_TB_1,
+    AsduTypeId.C_SE_TC_1,
+)
+
+# Команды (ТУ/ТР и др.) — без deadband, threshold=0
+COMMAND_ASDU = (
+    AsduTypeId.C_SC_NA_1,
+    AsduTypeId.C_DC_NA_1,
+    AsduTypeId.C_RC_NA_1,
+    AsduTypeId.C_SE_NA_1,
+    AsduTypeId.C_SE_NB_1,
+    AsduTypeId.C_SE_NC_1,
+    AsduTypeId.C_BO_NA_1,
+    AsduTypeId.C_SC_TA_1,
+    AsduTypeId.C_DC_TA_1,
+    AsduTypeId.C_RC_TA_1,
+    AsduTypeId.C_SE_TA_1,
+    AsduTypeId.C_SE_TB_1,
+    AsduTypeId.C_SE_TC_1,
+    AsduTypeId.C_BO_TA_1,
+    AsduTypeId.C_IC_NA_1,
+    AsduTypeId.C_CI_NA_1,
+    AsduTypeId.C_RD_NA_1,
+    AsduTypeId.C_CS_NA_1,
+    AsduTypeId.C_TS_NA_1,
+    AsduTypeId.C_RP_NA_1,
+    AsduTypeId.C_CD_NA_1,
+    AsduTypeId.C_TS_TA_1,
 )
 
 

@@ -4,6 +4,7 @@
 import argparse
 from dataclasses import dataclass
 from typing import List
+import const
 
 @dataclass
 class Signal:
@@ -121,6 +122,22 @@ def generate_periphaddr_section(type_name, name_template, start, end, ca):
     
     return "\n".join(lines)
 
+def generate_signals_csv(ca_num: int, name_template: str, start: int, end: int) -> str:
+    """Генерирует содержимое signals.csv для симулятора (тот же порядок сигналов и IOA, что и в DPL)."""
+    lines = ["id\tca\tioa\tasdu\tname\tdsc\tval\tthreshold"]
+    sig_id = 1
+    for i in range(start, end + 1):
+        dp_name = name_template.format(i)
+        for s in SIGNALS:
+            asdu = int(s.mek_type)
+            name = f"{dp_name}.{s.name}"
+            is_float = asdu in const.FLOAT_ASDU
+            val = "0.0" if is_float else "0"
+            thresh = "0" if asdu in const.COMMAND_ASDU else ("0.1" if is_float else "")
+            lines.append(f"{sig_id}\t{ca_num}\t{sig_id}\t{asdu}\t{name}\t\t{val}\t{thresh}")
+            sig_id += 1
+    return "\n".join(lines)
+
 def main():
     parser = argparse.ArgumentParser(description='Генератор ascii dump файла для базы данных')
     parser.add_argument('--type', default='ZDV', help='Тип элементов (по умолчанию: ZDV)')
@@ -128,8 +145,10 @@ def main():
     parser.add_argument('--start', type=int, default=1, help='Начальное значение счетчика (по умолчанию: 1)')
     parser.add_argument('--end', type=int, required=True, help='Конечное значение счетчика')
     parser.add_argument('--output', '-o', default='output.txt', help='Выходной файл (по умолчанию: output.txt)')
-    parser.add_argument('--ca', '-c', default='0.2', help='Номер КП(ca) по умолчанию')
+    parser.add_argument('--ca', '-c', default='0.2', help='Номер КП(ca) для DPL reference')
+    parser.add_argument('--ca-num', type=int, default=2, help='Номер КП (ca) для signals.csv')
     parser.add_argument('--drv', '-d', default='2', help='Номер драйвера по умолчанию')
+    parser.add_argument('--signals-csv', '-s', default=None, help='Дополнительно записать signals.csv для симулятора')
 
     args = parser.parse_args()
     
@@ -152,10 +171,15 @@ def main():
     # Объединяем все секции
     content = "\n".join(sections)
     
-    # Записываем в файл
     with open(args.output, 'w', encoding='utf-8') as f:
         f.write(content)
-    
+
+    if args.signals_csv:
+        csv_content = generate_signals_csv(args.ca_num, args.template, args.start, args.end)
+        with open(args.signals_csv, 'w', encoding='utf-8') as f:
+            f.write(csv_content)
+        print(f"Файл {args.signals_csv} (signals.csv) создан.")
+
     # Подсчет статистики
     signals_per_device = len(SIGNALS)
     total_signals = (args.end - args.start + 1) * signals_per_device

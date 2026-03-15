@@ -1,16 +1,26 @@
 [nw]
-port = 2404
+port = 2405
 max_clients = 8
-listen_ip = "0.0.0.0"
+bind_ip = "0.0.0.0"
+allow_ip = ["192.168.2.52", "127.0.0.1"]
 
 [prot]
+ca = 3
 t3 = 10
 k = 12
 w = 8
+max_rx_buf = 16384
+send_sleep = 0
 
 [sim]
-sc = "data.txt"
+sc = "sc.csv"
+
+[sg]
+addr = "signals.csv"
+
 
 [log]
+name = "DRV"
 lvl = "DEBUG"
 fname = "srv.log"
+i_frame_stats_every = 1000

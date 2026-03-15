@@ -64,6 +64,7 @@ def handle_i_frame(frame: bytes, state: cm.ClientState):
     log = state.log        
     n_s = struct.unpack('<H', frame[2:4])[0] >> 1
     n_r = struct.unpack('<H', frame[4:6])[0] >> 1
+    state.last_ack_nr = n_r  # клиент подтвердил приём наших I-кадров с N(S) < N(R)
     if n_s != state.rec_sq:
         log.error(f'C->S [SEQ ERROR] Ожидание N(S)={state.rec_sq} пришло {n_s}')
         # выполнить разрыв связи
@@ -143,8 +144,22 @@ def handle_u_frame(frame: bytes, state: cm.ClientState):
     except ValueError:
          log.warning(f'C->S [U-FRAME] Ошибочный байт {frame.hex(" ").upper()}')
 
-def handle_s_frame(frame, state: cm.ClientState):
-    pass 
+def build_s_frame(state: cm.ClientState) -> bytes:
+    """S-кадр: подтверждение приёма I-кадров до N(R). Формат 104: 68 04 01 00 N(R)<<1."""
+    nr = (state.rec_sq << 1).to_bytes(2, 'little')
+    return b'\x68\x04\x01\x00' + nr
+
+def handle_s_frame(frame: bytes, state: cm.ClientState) -> None:
+    """Приём S-кадра: парсинг N(R) — клиент подтвердил приём наших I-кадров с N(S) < N(R)."""
+    if len(frame) < 6:
+        if state.log:
+            state.log.warning('C->S [S-FRAME] Слишком короткий кадр')
+        return None
+    n_r = struct.unpack('<H', frame[4:6])[0] >> 1
+    state.last_ack_nr = n_r
+    if state.log:
+        state.log.debug(f'C->S [S-FRAME] N(R)={n_r}')
+    return None
 
 def datetime_to_cp56(dt: datetime, iv = False) -> bytes:
     # ms в текущей минуте (little-endian)
