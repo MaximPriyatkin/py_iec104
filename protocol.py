@@ -5,42 +5,41 @@ import common as cm
 
 # pyright: reportOptionalMemberAccess=false
 
-def build_i_frame(state: cm.ClientState, event) -> bytes|None:
-    log = state.log
-    id = event.id
-    ioa = event.ioa 
-    t_asdu = event.asdu 
-    val = event.val 
-    ts = event.ts 
-    q = event.q
-    cot = event.cot 
-    vsq = 0x01
-    cot_bytes = struct.pack('<H', cot)
-    asdu_header = struct.pack('<BBBBH', t_asdu, vsq, cot_bytes[0], cot_bytes[1], state.ca)
-    ioa_bytes = int.to_bytes(ioa, 3, 'little')
+def _encode_obj(t_asdu, ev) -> bytes | None:
+    ioa_b = int.to_bytes(ev.ioa, 3, 'little')
     if t_asdu in (1, 30):
-        sp_val = int(val) & 0x01
-        siq = bytes([q | sp_val])
-        body = ioa_bytes + siq
+        body = ioa_b + bytes([ev.q | (int(ev.val) & 0x01)])
         if t_asdu == 30:
-            body += datetime_to_cp56(ts)
+            body += datetime_to_cp56(ev.ts)
     elif t_asdu in (13, 36):
-        body = ioa_bytes + struct.pack('<fB', float(val), q)
+        body = ioa_b + struct.pack('<fB', float(ev.val), ev.q)
         if t_asdu == 36:
-            body += datetime_to_cp56(ts)
-    elif t_asdu in (100,):
-        qoi = bytes([int(event.val) & 0xFF])
-        body = ioa_bytes + qoi
-    elif t_asdu in (31,): #заглушка
-        body = ioa_bytes
+            body += datetime_to_cp56(ev.ts)
+    elif t_asdu == 100:
+        body = ioa_b + bytes([int(ev.val) & 0xFF])
+    elif t_asdu == 31:
+        body = ioa_b
     else:
-        state.log.error(f'Тип ASDU  {t_asdu} не поддерживается драйвером')
         return None
-    asdu = asdu_header + body
+    return body
+
+def build_i_frame(state: cm.ClientState, events: list) -> bytes | None:
+    if not events:
+        return None
+    t_asdu = events[0].asdu
+    cot = events[0].cot
+    parts = []
+    for ev in events:
+        obj = _encode_obj(t_asdu, ev)
+        if obj is None:
+            state.log.error(f'Тип ASDU {t_asdu} не поддерживается драйвером')
+            return None
+        parts.append(obj)
+    cot_bytes = struct.pack('<H', cot)
+    asdu = struct.pack('<BBBBH', t_asdu, len(events), cot_bytes[0], cot_bytes[1], state.ca) + b''.join(parts)
     send_sq = (state.send_sq << 1).to_bytes(2, 'little')
     rec_sq = (state.rec_sq << 1).to_bytes(2, 'little')
-    apdu_header = b'\x68' + bytes([len(asdu) + 4]) + send_sq + rec_sq
-    return apdu_header + asdu
+    return b'\x68' + bytes([len(asdu) + 4]) + send_sq + rec_sq + asdu
 
 
 def build_i_frame_ack(state:cm.ClientState, frame, cot):

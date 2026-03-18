@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -26,12 +27,14 @@ class Conf():
     prot_k: int
     prot_w: int
     max_rx_buf: int
-    send_sleep: float  # пауза (с) после отправки I-кадра; > 0 снижает CPU на пакетировании
     sim_sc: str
     sg_addr: str
-    log_lvl: str
+    log_file_lvl: str
+    log_console_lvl: str
     log_name: str
     log_fname: str
+    log_backup: int
+    log_size: int
     log_i_frame_stats_every: int  # интервал вывода в лог статистики I-frame (раз в N отправленных)
 
 
@@ -48,38 +51,63 @@ def load_config(path="config.toml"):
         prot_k=data['prot']['k'],
         prot_w=data['prot']['w'],
         max_rx_buf=data['prot']['max_rx_buf'],
-        send_sleep=float(data['prot'].get('send_sleep', 0)),
         sim_sc=data['sim']['sc'],
         sg_addr = data['sg']['addr'],
-        log_lvl=data['log']['lvl'],
+        log_file_lvl=data['log']['file_lvl'],
+        log_console_lvl=data['log']['console_lvl'],
         log_fname=data['log']['fname'],
         log_name=data['log']['name'],
+        log_backup=data['log']['backup'],
+        log_size=data['log']['size'],
         log_i_frame_stats_every=data['log'].get('i_frame_stats_every', 1000),
         )
 
 # ---- Логгирование ----
-def setup_logging(conf:Conf):
-    """Настройка логгирования для драйверов
-    """    
+def setup_logging(conf:Conf) -> logging.Logger:
+    """Конфигурирует логгер с форматом "время\tимя\tуровень\tсообщение".
+    
+    Args:
+        conf: объект с параметрами:
+            - log_name: имя логгера (появится в каждой записи, для возможности объединения логов нескольких устройств)
+            - log_lvl: уровень отладки (DEBUG, INFO и т.д.)
+            - log_fname: путь к файлу логов
+            
+    Returns:
+        Настроенный логгер. По умолчанию пишет только в файл,
 
+    TODO: добавить ротацию файла
+    TODO: добавить переключение вывода (в файл, в консоль, в оба места)
+    TODO: вынести строку настройки лога в конфигурационный файл    
+        
+    Note:
+        Формат времени: ГГГГ-ММ-ДД ЧЧ:ММ:СС.мс
+        Пример: 2024-01-15 14:30:25.123
+    """
     logger = logging.getLogger(conf.log_name)
-    num_lvl = getattr(logging, conf.log_lvl.upper(), logging.DEBUG)
-    logger.setLevel(num_lvl)
-
+    logger.setLevel(logging.DEBUG)
     formater = logging.Formatter(
         '%(asctime)s.%(msecs)03d\t%(name)s\t%(levelname)s\t%(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
+    file_lvl = getattr(logging, conf.log_file_lvl.upper(), logging.DEBUG)
     file_handler = logging.FileHandler(conf.log_fname, encoding='utf-8')
-    #file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formater)
+    file_handler.setLevel(file_lvl)
+    #logger.addHandler(file_handler)
+    rotate_handler = RotatingFileHandler(conf.log_fname, 
+                                         maxBytes=conf.log_size * 1024 * 1024, 
+                                         backupCount=conf.log_backup, 
+                                         encoding='utf-8')
+    rotate_handler.setFormatter(formater)
+    rotate_handler.setLevel(file_lvl)    
+    logger.addHandler(rotate_handler)
 
+
+    console_lvl = getattr(logging, conf.log_console_lvl.upper(), logging.CRITICAL)
     console_handler = logging.StreamHandler(sys.stdout)
-    #console_handler.setLevel(logging.DEBUG)
     console_handler.setFormatter(formater)
-
-    logger.addHandler(file_handler)
-    #logger.addHandler(console_handler)
+    console_handler.setLevel(console_lvl)
+    logger.addHandler(console_handler)
 
     return logger
 
@@ -142,7 +170,7 @@ def create_data_storage():
                 raise ValueError(f'IOA {ioa} уже существует')
             _ioa_idx[ioa] = id
     
-    def update_val(new_val, *, id = None, ioa = None, new_q=0x00, ts=None):
+    def update_val(val, *, id = None, ioa = None, q=0, ts=None):
         if (id is not None) == (ioa is not None):
             raise ValueError ('Нельзя определять id и ioa одновременно')
         if ioa is not None:
@@ -153,21 +181,21 @@ def create_data_storage():
             sg = _signals.get(id)
             if not sg:
                 return False
-            q_change = (new_q != sg.q)
+            q_change = (q != sg.q)
             val_change = False
             if sg.threshold is not None:
                 try:
-                    if abs(new_val - sg.val) >= sg.threshold:
+                    if abs(val - sg.val) >= sg.threshold:
                         val_change = True
                 except (TypeError, ValueError):
-                    val_change = (new_val != sg.val)
+                    val_change = (val != sg.val)
             else:
-                val_change = (new_val != sg.val)
+                val_change = (val != sg.val)
             if not val_change and not q_change:
                 return False
             sg.ts = ts or datetime.now()
-            sg.val = new_val
-            sg.q = new_q
+            sg.val = val
+            sg.q = q
             event = IecEvent(id=id, ioa=sg.ioa, asdu=sg.asdu, val=sg.val, ts=sg.ts, q=sg.q)
             if sg.asdu >= 45:
                 return True
@@ -175,6 +203,15 @@ def create_data_storage():
         for q in targets:
             q.put_nowait(event)
         return True
+    
+    def get_signal(id:int|None=None,  ioa:int|None=None):
+        if (id is not None) == (ioa is not None):
+            raise ValueError ('Нельзя определять id и ioa одновременно')
+        if id is None:
+            id = _ioa_idx[ioa]
+        res = {}
+        res[id] = _signals[id]
+        return dict(res)
 
     def get_all():
         with _lock:
@@ -194,7 +231,8 @@ def create_data_storage():
                            get_all=get_all,
                            subscribe=subscribe,
                            unsubscribe=unsubscribe,
-                           get_all_for_gi=get_all_for_gi)
+                           get_all_for_gi=get_all_for_gi,
+                           get_signal=get_signal)
 
 def load_signal(add_signal:Callable, ca:int, fname: str='signals.csv') :
     """Функция загрузки конфигурации сигналов из файла csv
@@ -231,7 +269,7 @@ def get_val_by_asdu(type_asdu:int, val:str):
         return float(val)
 
 def print_signals(sg_dict: dict):
-    header = f"{'ID':<8} | {'IOA':<8} | {'TYPE':<6} | {'Name':<15} | {'Value':<8} | {'Threshold'}"
+    header = f"{'ID':<8} | {'IOA':<8} | {'TYPE':<6} | {'Name':<35} | {'Value':<8} | {'Threshold'}"
     separator = "-" * len(header)
     print('\n' + separator)
     print(header)
@@ -239,7 +277,7 @@ def print_signals(sg_dict: dict):
     sorted_sg = sorted(sg_dict.keys())
     for row in sorted_sg:
         sg = sg_dict[row]
-        print(f'{row:<8} | {sg.ioa:<8} | {sg.asdu:<6} | {sg.name:<15} | {sg.val:<8} | {sg.threshold}')
+        print(f'{row:<8} | {sg.ioa:<8} | {sg.asdu:<6} | {sg.name:<35} | {sg.val:<8} | {sg.threshold}')
     print(separator)
 
 
@@ -262,6 +300,7 @@ class ClientState:
     on_gi: Optional[Callable[[], Iterable[IecEvent]]] = None
     rec_count_since_send: int = 0  # число принятых I-кадров без ответа (для отправки S по w)
     last_ack_nr: int = 0  # последний N(R) от клиента — подтверждённые им наши I-кадры (для ограничения по k)
+    sent_obj: int = 0  # счётчик отправленных ASDU-объектов (для статистики)
 
 def create_client_storage():
     _clients = {}

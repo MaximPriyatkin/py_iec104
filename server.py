@@ -10,44 +10,62 @@ import common as cm
 import protocol as prt
 import imit as im
 
-# state в client_send/client_rec всегда инициализирован в main()
+# state в client_send/client_rec всегда инициализирован 
 # pyright: reportOptionalMemberAccess=false
 
 def client_send(state: cm.ClientState):
     log = state.log
     log.info('Поток отправки запущен')
-    t = time.time()
+    get_time = time.monotonic
+    t = get_time()
     while not state.stop_event.is_set():
-        try:
-            try:
+        try:  # обработка соединения
+            try:  # обработка очереди кадров
                 event = state.out_que.get(timeout=1.0)
                 if not state.startdt_confirmed:
                     log.debug(f'Передача запрещена, событие {event} игнорируем')
+                    time.sleep(0.01)  # так как не очень важно оставляем sleep
                     continue
                 unack = (state.send_sq - state.last_ack_nr) % 32768
                 if unack >= state.conf.prot_k:
                     state.out_que.put(event)
-                    time.sleep(0.01) 
+                    time.sleep(0.01)  # todo - сделать событие от приема кадра
                     continue
-
-                packet = prt.build_i_frame(state, event)
+                batch = [event] # упаковка нескольких ASDU в один кадр для быстрой отправки
+                obj_size = 3 + const.ASDU_DATA_SIZE.get(event.asdu, 1) # - 3 байта размер ASDU
+                # 243 - число объектов в APDU, чтобы уместилось вне зависимости от типа ASDU
+                # 127 - максимальное количество объектов
+                max_obj = min(127, 243 // obj_size)
+                # если в очереди подряд идут одинаковые ASDU - упаковываем их в один пакет  
+                try:
+                    while len(batch) < max_obj:
+                        nxt = state.out_que.get_nowait()
+                        if nxt.asdu == event.asdu and nxt.cot == event.cot:
+                            batch.append(nxt)
+                        else:
+                            state.out_que.put(nxt)
+                            break
+                except queue.Empty:
+                    pass
+                packet = prt.build_i_frame(state, batch)
                 if packet is not None:
-                    state.conn.send(packet)               
-                state.last_send = time.time()
-                state.send_sq = (state.send_sq + 1) % 32768
-                if state.conf.send_sleep > 0:
-                    time.sleep(state.conf.send_sleep)
-                n = state.conf.log_i_frame_stats_every
-                if n and state.send_sq % n == 0 and time.time() - t > 0:
-                    dt = time.time() - t
-                    log.info(f"I-frame: отправлено {state.send_sq}, очередь {state.out_que.qsize()}, скорость {n/dt:.1f} пак/с")
-                    t = time.time()
-                log.debug(f"S->C [I-FRAME] IOA:{event.ioa} VAL:{event.val} TIME:{event.ts} V(S):{state.send_sq}")
+                    state.conn.send(packet)
+                state.last_send = get_time()  # для формирования отправки тестового кадра по прстою
+                state.send_sq = (state.send_sq + 1) % 32768 # 32768 - защита от переполнения 2х байтного поля
+                state.sent_obj += len(batch)  # для статистики, добавляем число отправленных ASDU в одном пакете
+                n = state.conf.log_i_frame_stats_every  # через сколько пакетов отправлять статистику
+                # Вывод статистики по переданным кадрам
+                if n and state.sent_obj % n < len(batch) and get_time() - t > 0:
+                    dt = get_time() - t
+                    log.info(f"I-frame: кадров {state.send_sq}, объектов {state.sent_obj}, очередь {state.out_que.qsize()}, скорость {state.sent_obj/dt:.1f} obj/с")
+                    t = get_time()
+                    state.sent_obj = 0
+                log.debug(f"S->C [I-FRAME] ASDU:{event.asdu} COUNT_OBJ:{len(batch)} V(S):{state.send_sq}")
             except queue.Empty:
                 pass
-            now = time.time()
+            now = get_time()
             if state.conf and (now - state.last_send) >= state.conf.prot_t3:
-                log.debug(f'S->C [TESTFR ACT] Канала простаивает {state.conf.prot_t3}c')
+                log.debug(f'S->C [TESTFR ACT] Канал простаивал {state.conf.prot_t3}c')
                 state.conn.send(const.TESTFR_ACT)
                 state.last_send = now
         except (socket.error, ConnectionError, BrokenPipeError) as e:
@@ -69,7 +87,7 @@ def client_rec(state, remove_client, data_storage):
                     continue
                 if not data:
                      break
-                log.debug(f'С->S [RAW] {data.hex(" ").upper()}')
+                log.debug(f'C->S [RAW] {data.hex(" ").upper()}')
                 buffer.extend(data)
                 if len(buffer) > state.conf.max_rx_buf:
                     log.error(f'Буфер переполнен, очищаем буфер {len(buffer)} > {state.conf.max_rx_buf}')
@@ -130,36 +148,75 @@ def _cmd_addr(ctx, _args):
     cm.print_signals(ctx.sg.get_all())
 
 def _cmd_set(ctx, args):
-    res = ctx.sg.update_val(float(args[0]), id=int(args[1]))
+    q = int(args[2],2)
+    res = ctx.sg.update_val(float(args[0]), id=int(args[1]), q=q)
     if res:
-        cm.print_signals(ctx.sg.get_all())
+        cm.print_signals(ctx.sg.get_signal(int(args[1])))
 
 def _cmd_setioa(ctx, args):
     res = ctx.sg.update_val(float(args[0]), ioa=int(args[1]))
     if res:
         cm.print_signals(ctx.sg.get_all())
 
-def _cmd_imit(ctx, args):
+def _cmd_imit_rand(ctx, args):
     cnt_time, cnt_id = int(args[0]), int(args[1])
     def run():
-        for _, sid, val, q in im.sim_float(cnt_time=cnt_time, cnt_id=cnt_id, list_id=[5, 6], sleep_s=im.SIM_SLEEP):
-            ctx.sg.update_val(val, id=sid, new_q=q)
+        list_id = list(range(5, 100, 8))
+        print(list_id)
+        for _, sid, val, q in im.imit_rand(cnt_time=cnt_time, cnt_id=cnt_id, list_id=list_id, sleep_s=im.SIM_SLEEP):
+            ctx.sg.update_val(val, id=sid, q=q)
         ctx.log.info('Имитация завершена')
     Thread(target=run, daemon=True).start()
     print('Имитация запущена в фоне')
 
+def _cmd_imit_ladder(ctx, args):
+    cnt_step = int(args[0])
+    time_step, val_step, val_min, val_max = float(args[1]), float(args[2]), float(args[3]), float(args[4])
+    def run():
+        list_id = list(range(5, 100, 8))
+        for _, sid, val, q in im.imit_ladder(cnt_step=cnt_step, 
+                                             time_step=time_step,
+                                             val_step=val_step,
+                                             val_min=val_min, 
+                                             val_max=val_max,
+                                             list_id=list_id):
+            ctx.sg.update_val(val, id=sid, q=q)
+        ctx.log.info('Имитация завершена')
+    Thread(target=run, daemon=True).start()
+    print('Имитация запущена в фоне')
+
+def _cmd_set_log_level(ctx, args):
+    target = args[0].lower()
+    level_str = args[1].upper()
+    level_int = getattr(cm.logging, level_str, None)
+    if (level_int is None or
+        target not in ('file', 'console')):
+        return
+    logger = cm.logging.getLogger(conf.log_name)
+    for hdl in logger.handlers:
+        if (target == 'file') and isinstance(hdl, cm.logging.FileHandler):
+            hdl.setLevel(level_str)
+            print(f"Уровень ФАЙЛА для всех изменен на {level_str}")
+        elif (target == 'console' and type(hdl) is
+            cm.logging.StreamHandler):
+            hdl.setLevel(level_str)
+            print(f"Уровень КОНСОЛИ для всех изменен на {level_str}")
+
+
 def _cmd_help(ctx, _args):
     for name, (n, _) in COMMANDS.items():
-        print(f"  {name}" + (f" <arg1> <arg2>" if n else ""))
+        print(f"  {name}" + (f" <arg1> <arg2> ..." if n else ""))
 
 # (число аргументов, обработчик; обработчик возвращает True только для exit)
 COMMANDS = {
     "exit": (0, _cmd_exit),
     "clients": (0, _cmd_clients),
     "addr": (0, _cmd_addr),
-    "set": (2, _cmd_set),
+    "set": (3, _cmd_set),
     "setioa": (2, _cmd_setioa),
-    "imit": (2, _cmd_imit),
+    "imit_rand": (2, _cmd_imit_rand),
+    "imit_ladder": (5, _cmd_imit_ladder),
+    "log_level": (2, _cmd_set_log_level),    
     "help": (0, _cmd_help),
 }
 
@@ -205,6 +262,7 @@ def main(conf:cm.Conf):
     client_threads = []
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((conf.nw_bind_ip, conf.nw_port))
         sock.listen()
         sock.settimeout(1.0)

@@ -30,13 +30,6 @@ class Signal:
             "51": "526",  # Тип 51 - Уставка с меткой времени (ТР)
             "58": "532",  # Тип 58 - Управление шаговым переключателем (ТУ)
             "59": "532",  # Тип 59 - Управление шаговым переключателем с меткой времени
-            "100": "532", # Тип 100 - Обобщенный ответ (ТУ)
-            "101": "532", # Тип 101 - Обобщенный ответ с меткой времени
-            "103": "521", # Тип 103 - Обобщенная команда (ТС)
-            "120": "521", # Тип 120 - Одноэлементная информация (ТС)
-            "121": "526", # Тип 121 - Измерение (ТИ)
-            "122": "526", # Тип 122 - Уставка (ТР)
-            "123": "532", # Тип 123 - Управление (ТУ)
         }
         return type_map.get(self.mek_type, "526")  # По умолчанию 526 (ТИ)
 
@@ -143,12 +136,12 @@ def main():
     parser.add_argument('--type', default='ZDV', help='Тип элементов (по умолчанию: ZDV)')
     parser.add_argument('--template', default='KP_1_ZDV_{}', help='Шаблон имени со счетчиком (по умолчанию: KP_1_ZDV_{})')
     parser.add_argument('--start', type=int, default=1, help='Начальное значение счетчика (по умолчанию: 1)')
-    parser.add_argument('--end', type=int, required=True, help='Конечное значение счетчика')
-    parser.add_argument('--output', '-o', default='output.txt', help='Выходной файл (по умолчанию: output.txt)')
+    parser.add_argument('--end', '-e', type=int, required=True, help='Конечное значение счетчика')
+    parser.add_argument('--output', '-o', default='kp_1.dpl', help='Выходной файл (по умолчанию: output.txt)')
     parser.add_argument('--ca', '-c', default='0.2', help='Номер КП(ca) для DPL reference')
     parser.add_argument('--ca-num', type=int, default=2, help='Номер КП (ca) для signals.csv')
     parser.add_argument('--drv', '-d', default='2', help='Номер драйвера по умолчанию')
-    parser.add_argument('--signals-csv', '-s', default=None, help='Дополнительно записать signals.csv для симулятора')
+    parser.add_argument('--signals-csv', '-s', default='signal.csv', help='Дополнительно записать signals.csv для симулятора')
 
     args = parser.parse_args()
     

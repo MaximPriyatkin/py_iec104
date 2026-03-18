@@ -10,7 +10,6 @@ t3 = 10
 k = 30  # по умолчанию 12
 w = 8
 max_rx_buf = 16384
-send_sleep = 0
 
 [sim]
 sc = "sc.csv"
@@ -18,9 +17,11 @@ sc = "sc.csv"
 [sg]
 addr = "signals.csv"
 
-
 [log]
 name = "DRV"
-lvl = "INFO"
+file_lvl = "INFO"
+console_lvl = ""
 fname = "srv.log"
-i_frame_stats_every = 1000
+backup = 5  # Количество сохраняемых файлов при ротации
+size = 2  # Размер лог-файла в мегабайтах
+i_frame_stats_every = 10000

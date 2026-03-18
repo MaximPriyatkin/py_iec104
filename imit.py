@@ -4,11 +4,31 @@ from typing import Iterator, Tuple
 import struct
 
 # Пауза (с) после каждого N-го yield — снижение нагрузки CPU
-SIM_SLEEP = 0.1
-SIM_SLEEP_EVERY_N = 10  # спать только каждый N-й пакет
+SIM_SLEEP = 0
+SIM_SLEEP_EVERY_N = 1000  # спать только каждый N-й пакет
 
+def imit_ladder(cnt_step: int = 1000,
+                time_step: float = 1.0,
+                val_step: float = 0.1,
+                val_min: float = 0.0,
+                val_max: float = 5.0,
+                list_id: list = list()):
+    list_id = list_id or []
+    val = val_min
+    q = 0
+    for _ in range(cnt_step):
+        t = time.time()
+        time.sleep(time_step)
+        for id in list_id:
+            yield t, id, val, q
+        if val + val_step > val_max:
+            val = val_min
+        else:
+            val += val_step
+    
+       
 
-def sim_float(cnt_time: int = 100000,
+def imit_rand(cnt_time: int = 100000,
               cnt_id: int = 100,
               list_id: list = list(),
               type_pack: int = 0,
@@ -44,7 +64,7 @@ def sim_float(cnt_time: int = 100000,
             tme_sg = base_time + rnd
             q = 1 if rnd > 0.9 else 0
             if type_pack == 0:
-                yield (tme_sg, id, val, q)
+                yield tme_sg, id, val, q
             elif type_pack == 1:
                 yield pack_1(tme_sg, id, val, q)
             elif type_pack == 2:
@@ -53,5 +73,7 @@ def sim_float(cnt_time: int = 100000,
             time.sleep(sleep_s)
 
 if __name__ == '__main__':
-    for v in sim_float(cnt_time=10, cnt_id=10, list_id=[1,2]):
+    for v in imit_ladder(cnt_step=10, time_step=0.1, val_step=1, val_min=0, val_max=5, list_id=[1,2]):
+        print(v)
+    for v in imit_rand(cnt_time=0, cnt_id=10, list_id=[1,2]):
         print(v)
