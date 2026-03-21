@@ -12,7 +12,7 @@ This module provides core functionality for the IEC 104 driver including:
 import logging
 from logging.handlers import RotatingFileHandler
 import sys
-import re
+from fnmatch import fnmatch
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from datetime import datetime
@@ -53,6 +53,7 @@ class Conf:
     log_backup: int
     log_size: int
     log_i_frame_stats_every: int  # I-frame statistics logging interval (every N sent)
+    history_file: str
 
 
 def load_config(path: str = "config.toml") -> Conf:
@@ -95,6 +96,7 @@ def load_config(path: str = "config.toml") -> Conf:
         log_backup=data['log']['backup'],
         log_size=data['log']['size'],
         log_i_frame_stats_every=data['log'].get('i_frame_stats_every', 1000),
+        history_file=data.get('client', {}).get('history_file', ''),
     )
 
 
@@ -301,11 +303,11 @@ def create_data_storage():
         """
         if (id is not None) == (ioa is not None):
             raise ValueError('Cannot specify both id and ioa simultaneously')
-        if ioa is not None:
-            id = _ioa_idx.get(ioa)
-        if id is None:
-            return False
         with _lock:
+            if ioa is not None:
+                id = _ioa_idx.get(ioa)
+            if id is None:
+                return False
             sg = _signals.get(id)
             if not sg:
                 return False
@@ -328,8 +330,8 @@ def create_data_storage():
             if sg.asdu >= 45:
                 return True
             targets = list(_subs.values())
-        for q in targets:
-            q.put_nowait(event)
+        for sub in targets:
+            sub.put_nowait(event)
         return True
 
     def get_signal(id: int | None = None, ioa: int | None = None):
@@ -340,34 +342,32 @@ def create_data_storage():
             ioa: IOA (mutually exclusive with id).
 
         Returns:
-            dict: Dictionary with single signal entry.
+            dict: Dictionary with single signal entry, or empty dict if not found.
 
         Raises:
             ValueError: If both id and ioa are specified or neither is.
         """
         if (id is not None) == (ioa is not None):
             raise ValueError('Cannot specify both id and ioa simultaneously')
-        if id is None:
-            id = _ioa_idx[ioa]
-        res = {}
-        res[id] = _signals[id]
-        return dict(res)
+        with _lock:
+            if id is None:
+                id = _ioa_idx.get(ioa)
+            if id is None or id not in _signals:
+                return {}
+            return {id: _signals[id]}
 
     def get_signal_by_name(name_patt: str):
-        """Get signals matching name pattern (exact match with regex).
+        """Get signals matching name pattern (fnmatch glob).
 
         Args:
-            name_patt: Name pattern to match (interpreted as regex).
+            name_patt: Name pattern to match (e.g. "pressure*", "KP_1_ZDV_?.*").
 
         Returns:
             dict: Dictionary of matching signals by ID.
         """
-        res = {}
-        pattern = re.compile(f'^{name_patt}$')
-        for name, id in _name_idx.items():
-            if pattern.search(name):
-                res[id] = _signals[id]
-        return dict(res)
+        patt = name_patt.lower()
+        with _lock:
+            return {id: _signals[id] for name, id in _name_idx.items() if fnmatch(name, patt)}
 
     def get_all():
         """Get all signals.
@@ -484,23 +484,19 @@ def print_signals(sg_dict: dict) -> None:
         >>> storage = create_data_storage()
         >>> storage.add_signal(1, 45, 36, "pressure", 0.0, 0.1)
         >>> print_signals(storage.get_all())
-        ------------------------------------------------------------------------
-        ID       | IOA      | TYPE   | Name                                | Value    | Threshold
-        ------------------------------------------------------------------------
-        1        | 45       | 36     | pressure                            | 0.0      | 0.1
-        ------------------------------------------------------------------------
+
     """
     if len(sg_dict) == 0:
         return
-    header = f"{'ID':<8} | {'IOA':<8} | {'TYPE':<6} | {'Name':<35} | {'Value':<8} | {'Threshold'}"
+    header = f"{'ID':<8} | {'IOA':<8} | {'TYPE':<6} | {'Name':<35} | {'Value':<8} | {'Q':<4} | {'Timestamp':<23} | {'Threshold'}"
     separator = "-" * len(header)
     print('\n' + separator)
     print(header)
     print(separator)
-    sorted_sg = sorted(sg_dict.keys())
-    for row in sorted_sg:
+    for row in sorted(sg_dict.keys()):
         sg = sg_dict[row]
-        print(f'{row:<8} | {sg.ioa:<8} | {sg.asdu:<6} | {sg.name:<35} | {sg.val:<8} | {sg.threshold}')
+        ts = sg.ts.strftime('%Y-%m-%d %H:%M:%S.%f')[:23] if sg.ts else ''
+        print(f'{row:<8} | {sg.ioa:<8} | {sg.asdu:<6} | {sg.name:<35} | {sg.val:<8} | {sg.q:<4} | {ts:<23} | {sg.threshold}')
     print(separator)
 
 
@@ -557,6 +553,8 @@ class ClientState:
     last_ack_nr: int = 0  # Last N(R) from client - acknowledged our I-frames (for k-window)
     sent_obj: int = 0  # Counter for sent ASDU objects (for statistics)
     rx_buf: bytearray = field(default_factory=bytearray)
+    session_name: str = ''
+    on_data: Optional[Callable] = None
 
 
 def create_client_storage():
@@ -610,3 +608,24 @@ def create_client_storage():
         remove_client=remove_client,
         close_all=close_all
     )
+
+
+def load_connections(path: str = 'config.toml') -> list:
+    """Load connection definitions from config TOML file.
+
+    Reads [[conn]] sections.
+
+    Returns:
+        List of SimpleNamespace(name, ip, port, ca, auto_start, auto_gi).
+    """
+    with open(path, 'rb') as f:
+        data = tomllib.load(f)
+    return [
+        SimpleNamespace(
+            name=c['name'], ip=c['ip'],
+            port=c.get('port', 2404), ca=c.get('ca', 1),
+            auto_start=c.get('auto_start', True),
+            auto_gi=c.get('auto_gi', True),
+        )
+        for c in data.get('conn', [])
+    ]

@@ -18,197 +18,37 @@ import common as cm
 # pyright: reportOptionalMemberAccess=false
 
 
-def enc_siq(ev) -> bytes:
-    """Encode single point information (SIQ).
-
-    Used for:
-    - M_SP_NA_1: Single point information (monitoring)
-    - C_SC_NA_1: Single command
-
-    Format: 1 byte with value bit 0 and quality bits 1-7.
-
-    Args:
-        ev: IecEvent containing value and quality.
-
-    Returns:
-        Encoded SIQ byte.
-
-    Example:
-        >>> ev = IecEvent(id=1, ioa=45, asdu=30, val=1, q=0)
-        >>> enc_siq(ev)
-        b'\\x01'
-    """
-    return bytes([(int(ev.val) & 0x01) | (ev.q & 0xFE)])
+_TS_TYPES = frozenset((30, 31, 32, 33, 34, 35, 36, 37))
 
 
-def enc_diq(ev) -> bytes:
-    """Encode double point information (DIQ).
-
-    Used for:
-    - M_DP_NA_1: Double point information (monitoring)
-    - C_DC_NA_1: Double command
-
-    Format: 1 byte with value bits 0-1 and quality bits 2-7.
-
-    Args:
-        ev: IecEvent containing value and quality.
-
-    Returns:
-        Encoded DIQ byte.
-
-    Example:
-        >>> ev = IecEvent(id=1, ioa=45, asdu=31, val=2, q=0)
-        >>> enc_diq(ev)
-        b'\\x02'
-    """
-    return bytes([(int(ev.val) & 0x03) | (ev.q & 0xFC)])
-
-
-def enc_qds_float(ev) -> bytes:
-    """Encode measured value with quality (float).
-
-    Used for:
-    - M_ME_NC_1: Measured value, normalized value (float)
-    - M_ME_TF_1: Measured value with time tag (float)
-
-    Format: 4 bytes float (IEEE 754) + 1 byte quality.
-
-    Args:
-        ev: IecEvent containing value and quality.
-
-    Returns:
-        Encoded float value with quality (5 bytes).
-
-    Example:
-        >>> ev = IecEvent(id=1, ioa=45, asdu=36, val=100.5, q=0)
-        >>> enc_qds_float(ev)
-        b'\\x00\\x00\\xc9\\x42\\x00'
-    """
-    return struct.pack('<fB', float(ev.val), ev.q)
-
-
-def enc_vti(ev) -> bytes:
-    """Encode step position information (VTI).
-
-    Used for:
-    - M_ST_NA_1: Step position information
-    - M_ST_TB_1: Step position with time tag
-
-    Format: 1 byte signed value + 1 byte quality.
-
-    Args:
-        ev: IecEvent containing value and quality.
-
-    Returns:
-        Encoded VTI (2 bytes).
-    """
-    return struct.pack('<bB', int(ev.val), ev.q)
-
-
-def enc_nva(ev) -> bytes:
-    """Encode normalized value (NVA).
-
-    Used for:
-    - M_ME_NA_1: Measured value, normalized
-    - M_ME_NB_1: Measured value, scaled
-    - M_ME_TD_1: Measured value with time tag, normalized
-    - M_ME_TE_1: Measured value with time tag, scaled
-
-    Format: 2 bytes signed value + 1 byte quality.
-
-    Args:
-        ev: IecEvent containing value and quality.
-
-    Returns:
-        Encoded NVA (3 bytes).
-    """
-    return struct.pack('<hB', int(ev.val), ev.q)
-
-
-def enc_bsi(ev) -> bytes:
-    """Encode bitstring (BSI).
-
-    Used for:
-    - M_BO_NA_1: Bitstring of 32 bits
-    - M_BO_TB_1: Bitstring with time tag
-
-    Format: 4 bytes bitstring + 1 byte quality.
-
-    Args:
-        ev: IecEvent containing value and quality.
-
-    Returns:
-        Encoded BSI (5 bytes).
-    """
-    return struct.pack('<IB', int(ev.val), ev.q)
-
-
-def enc_bcr(ev) -> bytes:
-    """Encode binary counter reading (BCR).
-
-    Used for:
-    - M_IT_NA_1: Integrated totals
-    - M_IT_TB_1: Integrated totals with time tag
-
-    Format: 4 bytes signed counter + 1 byte quality.
-
-    Args:
-        ev: IecEvent containing value and quality.
-
-    Returns:
-        Encoded BCR (5 bytes).
-    """
-    return struct.pack('<iB', int(ev.val), ev.q)
-
-
-ENCODERS = {
-    # Without timestamp (Monitoring)
-    AsduTypeId.M_SP_NA_1: (enc_siq, False),
-    AsduTypeId.M_DP_NA_1: (enc_diq, False),
-    AsduTypeId.M_ST_NA_1: (enc_vti, False),
-    AsduTypeId.M_BO_NA_1: (enc_bsi, False),
-    AsduTypeId.M_ME_NA_1: (enc_nva, False),
-    AsduTypeId.M_ME_NB_1: (enc_nva, False),
-    AsduTypeId.M_ME_NC_1: (enc_qds_float, False),
-    AsduTypeId.M_IT_NA_1: (enc_bcr, False),
-
-    # With CP56Time2a timestamp (Monitoring)
-    AsduTypeId.M_SP_TB_1: (enc_siq, True),
-    AsduTypeId.M_DP_TB_1: (enc_diq, True),
-    AsduTypeId.M_ST_TB_1: (enc_vti, True),
-    AsduTypeId.M_BO_TB_1: (enc_bsi, True),
-    AsduTypeId.M_ME_TD_1: (enc_nva, True),
-    AsduTypeId.M_ME_TE_1: (enc_nva, True),
-    AsduTypeId.M_ME_TF_1: (enc_qds_float, True),
-    AsduTypeId.M_IT_TB_1: (enc_bcr, True),
-
-    # System and command types
-    AsduTypeId.C_IC_NA_1: (lambda ev: bytes([int(ev.val) & 0xFF]), False),
-    AsduTypeId.C_SC_NA_1: (enc_siq, False),  # Single command
-    AsduTypeId.C_DC_NA_1: (enc_diq, False),  # Double command
-}
+def _enc_val(type_id: int, ev) -> bytes | None:
+    """Encode value and quality into ASDU object data bytes."""
+    if type_id in (1, 30, 45):
+        return bytes([(int(ev.val) & 0x01) | (ev.q & 0xFE)])
+    if type_id in (3, 31, 46):
+        return bytes([(int(ev.val) & 0x03) | (ev.q & 0xFC)])
+    if type_id in (5, 32):
+        return struct.pack('<bB', int(ev.val), ev.q)
+    if type_id in (7, 33):
+        return struct.pack('<IB', int(ev.val), ev.q)
+    if type_id in (9, 11, 34, 35):
+        return struct.pack('<hB', int(ev.val), ev.q)
+    if type_id in (13, 36):
+        return struct.pack('<fB', float(ev.val), ev.q)
+    if type_id in (15, 37):
+        return struct.pack('<iB', int(ev.val), ev.q)
+    if type_id == 100:
+        return bytes([int(ev.val) & 0xFF])
+    return None
 
 
 def _enc_obj(t_asdu, ev) -> bytes | None:
-    """Encode a single ASDU object.
-
-    Args:
-        t_asdu: ASDU type identifier.
-        ev: IecEvent to encode.
-
-    Returns:
-        Encoded object data (IOA + value + optional timestamp), or None on error.
-
-    Note:
-        This is an internal function used by build_i_frame.
-    """
-    config = ENCODERS.get(t_asdu)
-    if not config:
+    """Encode a single ASDU object (IOA + value + optional timestamp)."""
+    data = _enc_val(t_asdu, ev)
+    if data is None:
         return None
-    enc_func, has_ts = config
-    body = int.to_bytes(ev.ioa, 3, 'little')
-    body += enc_func(ev)
-    if has_ts:
+    body = int.to_bytes(ev.ioa, 3, 'little') + data
+    if t_asdu in _TS_TYPES:
         body += datetime_to_cp56(ev.ts)
     return body
 
@@ -560,6 +400,74 @@ def datetime_from_cp56(dt_bt: bytes) -> tuple[datetime | None, bool | None]:
         return dt, iv
     except ValueError as e:
         return None, None
+
+
+# ---- Decoding (client-side) ----
+
+def _dec_val(type_id: int, data: bytes):
+    """Decode value and quality from ASDU object data bytes."""
+    if type_id in (1, 30, 45):
+        return data[0] & 0x01, data[0] & 0xF0
+    if type_id in (3, 31, 46):
+        return data[0] & 0x03, data[0] & 0xF0
+    if type_id in (5, 32):
+        return struct.unpack('<b', bytes([data[0] & 0x7F]))[0], data[1]
+    if type_id in (7, 33):
+        return struct.unpack('<I', data[0:4])[0], data[4]
+    if type_id in (9, 11, 34, 35):
+        return struct.unpack('<h', data[0:2])[0], data[2]
+    if type_id in (13, 36):
+        return struct.unpack('<f', data[0:4])[0], data[4]
+    if type_id in (15, 37):
+        return struct.unpack('<i', data[0:4])[0], data[4]
+    if type_id == 100:
+        return data[0], 0
+    return None, 0
+
+
+def decode_i_frame_objects(frame: bytes) -> list[tuple]:
+    """Decode objects from an I-frame.
+
+    Returns:
+        list of (ioa, type_id, value, quality, cot, coa, timestamp|None).
+    """
+    if len(frame) < 12:
+        return []
+    asdu = frame[6:]
+    if len(asdu) < 6:
+        return []
+    type_id = asdu[0]
+    count = asdu[1] & 0x7F
+    is_seq = asdu[1] & 0x80
+    cot = struct.unpack('<H', asdu[2:4])[0]
+    coa = struct.unpack('<H', asdu[4:6])[0]
+    val_size = const.ASDU_DATA_SIZE.get(type_id)
+    if val_size is None:
+        return []
+    results = []
+    offset = 6
+    try:
+        if is_seq:
+            base_ioa = int.from_bytes(asdu[offset:offset+3], 'little')
+            offset += 3
+            for i in range(count):
+                d = asdu[offset:offset+val_size]
+                val, q = _dec_val(type_id, d)
+                ts = datetime_from_cp56(d[val_size-7:])[0] if type_id in _TS_TYPES else None
+                results.append((base_ioa + i, type_id, val, q, cot, coa, ts))
+                offset += val_size
+        else:
+            for _ in range(count):
+                ioa = int.from_bytes(asdu[offset:offset+3], 'little')
+                offset += 3
+                d = asdu[offset:offset+val_size]
+                val, q = _dec_val(type_id, d)
+                ts = datetime_from_cp56(d[val_size-7:])[0] if type_id in _TS_TYPES else None
+                results.append((ioa, type_id, val, q, cot, coa, ts))
+                offset += val_size
+    except (IndexError, struct.error):
+        pass
+    return results
 
 
 if __name__ == '__main__':

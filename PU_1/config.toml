@@ -26,3 +26,14 @@ fname = "srv.log"
 backup = 5  # Количество сохраняемых файлов при ротации
 size = 2  # Размер лог-файла в мегабайтах
 i_frame_stats_every = 1000
+
+[client]
+history_file = "history.tsv"
+
+# [[conn]]
+# name = "kp1"
+# ip = "127.0.0.1"
+# port = 2404
+# ca = 2
+# auto_start = true
+# auto_gi = true

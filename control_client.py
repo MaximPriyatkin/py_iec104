@@ -144,6 +144,33 @@ def _cmd_gi(ctx, args):
     print(f"GI sent: {name}")
 
 
+def _cmd_load(ctx, _args):
+    """
+    load - Load connections from config.toml [[conn]] and auto-connect.
+
+    Reads connection definitions, connects, sends STARTDT and GI
+    for each defined connection (if auto_start / auto_gi are set).
+
+    Example:
+        > load
+        Connected: kp1 -> 127.0.0.1:2404 ca=2
+    """
+    connections = ctx.api.load_config()
+    if not connections:
+        print('No [[conn]] sections found in config.toml')
+        return
+    for c in connections:
+        try:
+            ctx.api.connect(c.name, c.ip, c.port, c.ca)
+            if c.auto_start:
+                ctx.api.startdt(c.name)
+            if c.auto_gi:
+                ctx.api.gi(c.name)
+            print(f"Connected: {c.name} -> {c.ip}:{c.port} ca={c.ca}")
+        except Exception as e:
+            print(f"Error {c.name}: {e}")
+
+
 def _cmd_help(ctx, _args):
     """
     help - Show list of available client commands.
@@ -175,6 +202,7 @@ CLIENT_COMMANDS = {
     "disc": (1, _cmd_disc),
     "start": (1, _cmd_start),
     "gi": (1, _cmd_gi),
+    "load": (0, _cmd_load),
     "help": (0, _cmd_help),
 }
 
@@ -226,8 +254,8 @@ def client_handler(stop_thread: Callable, api: Callable, log, prompt_id: str = "
             print('Unknown command. help — list of commands.')
             continue
         n_args, handler = entry
-        if len(args) != n_args:
-            print(f'Expected {n_args} args for {cmd_name}, got {len(args)}. help — list of commands.')
+        if len(args) < n_args:
+            print(f'Expected at least {n_args} args for {cmd_name}, got {len(args)}. help — list of commands.')
             continue
         try:
             if handler(ctx, args):

@@ -25,24 +25,23 @@ The main goal is a local test bench for 104 communication verification and SCADA
 ```text
 drv60870/
 ├── client.py          # IEC-104 client (up to 8 connections, CLI)
-├── server.py          # IEC-104 server (accepts SCADA connections)
-├── protocol.py        # I/S/U frame and ASDU parsing/building
-├── const.py           # protocol constants
 ├── common.py          # config, state, storage, signal loading
-├── control_server.py  # server CLI commands
+├── const.py           # protocol constants
 ├── control_client.py  # client CLI commands
+├── control_server.py  # server CLI commands
+├── gen_dpl.py         # DPL generator for WinCC OA
 ├── imit.py            # signal simulation generators
 ├── log_viewer.py      # log viewer
-├── gen_dpl.py         # DPL generator
-├── test.py            # local testing utilities
-├── docs/
-│   ├── plans/
-│   └── help.md
+├── protocol.py        # I/S/U frame and ASDU parsing/building
+├── server.py          # IEC-104 server (accepts SCADA connections)
 ├── KP_1/, KP_2/       # RTU instance directories
 │   ├── config.toml
-│   ├── signals.csv
-│   └── srv.log
-└── README.md
+│   └── signals.csv
+├── PU_1/, PU_2/, PU_3/ # SCADA driver instance directories
+│   ├── config.toml
+│   └── run.cmd
+├── readme.md
+└── todo.md
 ```
 
 ## Configuration
@@ -50,7 +49,10 @@ drv60870/
 - `config.toml`:
   - network: `bind_ip`, `port`, `allow_ip`, `max_clients`
   - protocol: `ca`, `t3`, `k`, `w`, `strict_coa`, `max_rx_buf`
-  - logging: name, file, levels, rotation
+  - logging: `name`, `file`, `levels`, `rotation`
+  - client: `history_file` — TSV file for signal change history
+  - `[[conn]]` — connection definitions for auto-connect (client only):
+    - `name`, `ip`, `port`, `ca`, `auto_start`, `auto_gi`
 - `signals.csv`:
   - signal fields: `id`, `ca`, `ioa`, `asdu`, `name`, `val`, `threshold`
 
@@ -77,7 +79,7 @@ Server (`control_server.py`):
 
 - `clients`
 - `addr <name_pattern>`
-- `set <value> <id> <quality_bin>`
+- `set <value> <id> [quality]`
 - `setioa <value> <ioa>`
 - `imit_rand <cnt_time> <cnt_id>`
 - `imit_ladder <cnt_step> <time_step> <val_step> <val_min> <val_max> <name_pattern>`
@@ -90,6 +92,7 @@ Client (`control_client.py`):
 - `start <name>`
 - `gi <name>`
 - `disc <name>`
+- `load` — auto-connect from `[[conn]]` in config.toml
 - `clients`
 - `help`, `exit`
 

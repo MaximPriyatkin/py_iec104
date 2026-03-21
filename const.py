@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 # IEC 104 Constants
 START_BYTE = 0x68
+STARTDT_ACT = b'\x68\x04\x07\x00\x00\x00'
 TESTFR_ACT = b'\x68\x04\x43\x00\x00\x00'
 
 
@@ -65,8 +66,7 @@ class COT(IntEnum):
         DEACTIVATION: Deactivation
         ACTIVATION_CON: Activation confirmation
         DEACTIVATION_CON: Deactivation confirmation
-        EXECUTED_CON: Execution confirmation
-        ACTIVATION_TERM: General interrogation completion
+        ACTIVATION_TERM: Activation termination (e.g. end of GI)
         UNKNOWN_TYPE_ID: Unknown type identifier
     """
     PERIODIC = 1        # Cyclic transmission
@@ -78,8 +78,7 @@ class COT(IntEnum):
     DEACTIVATION = 8    # Deactivation
     ACTIVATION_CON = 7  # Activation confirmation
     DEACTIVATION_CON = 9  # Deactivation confirmation
-    EXECUTED_CON = 10       # Execution confirmation
-    ACTIVATION_TERM = 10    # General interrogation completion
+    ACTIVATION_TERM = 10    # Activation termination (e.g. end of GI)
     UNKNOWN_TYPE_ID = 44    # Unknown type identifier
 
 
@@ -95,7 +94,7 @@ class AsduTypeId(IntEnum):
     # ============= MONITORING DIRECTION =============
     # Basic types (without timestamp)
     M_SP_NA_1 = 0x01   # 1 Single point information
-    M_DP_NA_1 = 0x03   # 2 Double point information
+    M_DP_NA_1 = 0x03   # 3 Double point information
     M_ST_NA_1 = 0x05   # 5 Step position information
     M_BO_NA_1 = 0x07   # 7 Bitstring of 32 bits
     M_ME_NA_1 = 0x09   # 9 Measured value, normalized value
@@ -126,10 +125,10 @@ class AsduTypeId(IntEnum):
     C_SC_NA_1 = 0x2D   # 45 Single command
     C_DC_NA_1 = 0x2E   # 46 Double command
     C_RC_NA_1 = 0x2F   # 47 Regulating step command
-    C_SE_NA_1 = 0x30   # 49 Set point command, normalized value
-    C_SE_NB_1 = 0x31   # 50 Set point command, scaled value
-    C_SE_NC_1 = 0x32   # 51 Set point command, floating point value
-    C_BO_NA_1 = 0x33   # 52 Bitstring of 32 bits command
+    C_SE_NA_1 = 0x30   # 48 Set point command, normalized value
+    C_SE_NB_1 = 0x31   # 49 Set point command, scaled value
+    C_SE_NC_1 = 0x32   # 50 Set point command, floating point value
+    C_BO_NA_1 = 0x33   # 51 Bitstring of 32 bits command
 
     # Commands with CP56Time2a timestamp
     C_SC_TA_1 = 0x3A   # 58 Single command with CP56Time2a timestamp
@@ -238,14 +237,26 @@ COMMAND_ASDU = (
 # Object data length (Value + Quality + Timestamp) WITHOUT the 3-byte IOA
 ASDU_DATA_SIZE = {
     # --- Without timestamp ---
-    1:  1,  # M_SP_NA_1: 1 byte (SIQ)
-    3:  1,  # M_DP_NA_1: 1 byte (DIQ)
-    13: 5,  # M_ME_NC_1: 4 bytes (float) + 1 byte (QDS)
-    45: 1,  # C_SC_NA_1: 1 byte (SCO)
-    50: 5,  # C_SE_NC_1: 4 bytes (float) + 1 byte (QDS)
+    1:  1,   # M_SP_NA_1: 1 byte (SIQ)
+    3:  1,   # M_DP_NA_1: 1 byte (DIQ)
+    5:  2,   # M_ST_NA_1: 1 byte (VTI) + 1 byte (QDS)
+    7:  5,   # M_BO_NA_1: 4 bytes (BSI) + 1 byte (QDS)
+    9:  3,   # M_ME_NA_1: 2 bytes (NVA) + 1 byte (QDS)
+    11: 3,   # M_ME_NB_1: 2 bytes (NVA) + 1 byte (QDS)
+    13: 5,   # M_ME_NC_1: 4 bytes (float) + 1 byte (QDS)
+    15: 5,   # M_IT_NA_1: 4 bytes (BCR) + 1 byte (QDS)
+    45: 1,   # C_SC_NA_1: 1 byte (SCO)
+    46: 1,   # C_DC_NA_1: 1 byte (DCO)
+    50: 5,   # C_SE_NC_1: 4 bytes (float) + 1 byte (QOS)
+    100: 1,  # C_IC_NA_1: 1 byte (QOI)
 
     # --- With CP56Time2a timestamp (7 bytes) ---
-    30: 8,  # M_SP_TB_1: 1 byte (SIQ) + 7 bytes (Time)
-    31: 8,  # M_DP_TB_1: 1 byte (DIQ) + 7 bytes (Time)
-    36: 12, # M_ME_TF_1: 4 bytes (float) + 1 byte (QDS) + 7 bytes (Time)
+    30: 8,   # M_SP_TB_1: 1 byte (SIQ) + 7 bytes (Time)
+    31: 8,   # M_DP_TB_1: 1 byte (DIQ) + 7 bytes (Time)
+    32: 9,   # M_ST_TB_1: 1 byte (VTI) + 1 byte (QDS) + 7 bytes (Time)
+    33: 12,  # M_BO_TB_1: 4 bytes (BSI) + 1 byte (QDS) + 7 bytes (Time)
+    34: 10,  # M_ME_TD_1: 2 bytes (NVA) + 1 byte (QDS) + 7 bytes (Time)
+    35: 10,  # M_ME_TE_1: 2 bytes (NVA) + 1 byte (QDS) + 7 bytes (Time)
+    36: 12,  # M_ME_TF_1: 4 bytes (float) + 1 byte (QDS) + 7 bytes (Time)
+    37: 12,  # M_IT_TB_1: 4 bytes (BCR) + 1 byte (QDS) + 7 bytes (Time)
 }

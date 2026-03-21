@@ -312,7 +312,8 @@ def start_client_threads(state, client_storage, data_storage) -> list:
     # Start data reception thread
     t = Thread(
         target=client_rec,
-        args=(state, client_storage.remove_client, data_storage))
+        args=(state, client_storage.remove_client, data_storage),
+        daemon=True)
     t.start()
     threads.append(t)
     return threads
@@ -402,7 +403,6 @@ def shutdown_server(
     stop_thread.set()
     client_storage.close_all()
     log.info('Waiting for client threads to finish')
-    client_storage.close_all()
     for t in client_threads:
         t.join(timeout=2.0)
     sock.close()

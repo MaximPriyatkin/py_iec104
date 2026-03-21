@@ -2,6 +2,7 @@ import socket
 import struct
 import queue
 import time
+from datetime import datetime
 from threading import Thread, Event, Lock
 from types import SimpleNamespace
 
@@ -11,6 +12,27 @@ import protocol as prt
 from control_client import client_handler
 
 MAX_CONNECTIONS = 8
+
+
+def create_history_writer(filename: str):
+    """Create a thread-safe TSV writer for signal history."""
+    _lock = Lock()
+    _file = open(filename, 'a', encoding='utf-8')
+    if _file.tell() == 0:
+        _file.write("timestamp\tsession\tioa\tasdu\tvalue\tquality\tcot\n")
+        _file.flush()
+
+    def write(session_name: str, objects: list):
+        with _lock:
+            for ioa, asdu, val, q, cot, _coa, ts in objects:
+                ts_str = ts.strftime('%Y-%m-%d %H:%M:%S.%f')[:23] if ts else datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:23]
+                _file.write(f"{ts_str}\t{session_name}\t{ioa}\t{asdu}\t{val}\t{q}\t{cot}\n")
+            _file.flush()
+
+    def close():
+        _file.close()
+
+    return SimpleNamespace(write=write, close=close)
 
 # state в client_send/client_rec всегда инициализирован 
 # pyright: reportOptionalMemberAccess=false
@@ -90,7 +112,7 @@ def recv_loop(state: cm.ClientState):
         except (ConnectionError, OSError):
             state.stop_event.set()
             break
-    log.info("The reciving flow is stoped")
+    log.info("Receive loop stopped")
 
 def send_loop(state: cm.ClientState):
     """Send loop for transmitting data to the server.
@@ -129,7 +151,7 @@ def send_loop(state: cm.ClientState):
                     with state.sock_lock:
                         state.conn.send(const.TESTFR_ACT)
                     state.last_send = now
-                log.debug(f"S->KP [TESTFR ACT] The channel was idle {state.conf.prot_t3}c")
+                log.debug(f"S->KP [TESTFR ACT] Channel idle for {state.conf.prot_t3}s")
             continue
         except (ConnectionError, OSError):
             state.stop_event.set()
@@ -173,6 +195,10 @@ def process_frame(state: cm.ClientState, frame: bytes):
                 state.last_send = time.monotonic()
         asdu_type = frame[6] if len(frame) > 6 else -1
         log.debug(f"S->C [I-FRAME] ASDU:{asdu_type} N(S):{n_s} N(R):{n_r}")
+        if state.on_data:
+            objects = prt.decode_i_frame_objects(frame)
+            if objects:
+                state.on_data(state.session_name, objects)
         return
     if frame[2] & 0x02:  # U-frame
         try:
@@ -219,27 +245,10 @@ def create_client_socket(ip: str, port: int):
     conn.connect((ip, port))
     return conn
 
-def create_session_state(name: str, conn: socket.socket, ip: str, port: int, ca: int, conf: cm.Conf):
-    """Create and initialize a client state object.
-
-    Constructs a ClientState instance with all necessary components for
-    managing a client connection, including logging, queues, and buffers.
-
-    Args:
-        name: Session name identifier for logging.
-        conn: Connected socket object.
-        ip: Remote server IP address.
-        port: Remote server port.
-        ca: Common Address (station address).
-        conf: Global configuration object.
-
-    Returns:
-        Initialized ClientState object ready for use.
-
-    Example:
-        >>> state = create_session_state("plc1", sock, "192.168.1.10", 2404, 1, conf)
-    """
+def create_session_state(name: str, conn: socket.socket, ip: str, port: int, ca: int, conf: cm.Conf, on_data=None):
+    """Create and initialize a client state object."""
     state = cm.ClientState()
+    state.session_name = name
     state.addr = (ip, port)
     state.ca = ca
     state.conn = conn
@@ -247,6 +256,7 @@ def create_session_state(name: str, conn: socket.socket, ip: str, port: int, ca:
     state.log = cm.logging.getLogger(f"{conf.log_name}.client.{name}")
     state.out_que = queue.Queue()
     state.rx_buf = bytearray()
+    state.on_data = on_data
     return state
 
 def start_session_threads(state: cm.ClientState):
@@ -271,33 +281,12 @@ def start_session_threads(state: cm.ClientState):
     recv_t.start()
     return send_t, recv_t
 
-def start_session(name: str, ip: str, port: int, ca: int, conf: cm.Conf, root_log):
-    """Start a complete client session.
-
-    Creates a socket, initializes session state, and starts the
-    communication threads for a new client connection.
-
-    Args:
-        name: Session name identifier.
-        ip: Remote server IP address.
-        port: Remote server port.
-        ca: Common Address (station address).
-        conf: Global configuration object.
-        root_log: Root logger for logging session creation.
-
-    Returns:
-        Tuple of (state, send_thread, receive_thread).
-
-    Raises:
-        socket.error: If connection fails.
-
-    Example:
-        >>> state, send_t, recv_t = start_session("plc1", "192.168.1.10", 2404, 1, conf, log)
-    """
+def start_session(name: str, ip: str, port: int, ca: int, conf: cm.Conf, root_log, on_data=None):
+    """Start a complete client session."""
     conn = create_client_socket(ip, port)
-    state = create_session_state(name, conn, ip, port, ca, conf)
+    state = create_session_state(name, conn, ip, port, ca, conf, on_data)
     send_t, recv_t = start_session_threads(state)
-    root_log.info(f"The client's session {name} is already connected to {ip}:{port} ca={ca}")
+    root_log.info(f"Session {name} connected to {ip}:{port} ca={ca}")
     return state, send_t, recv_t
 
 def create_client_pool():
@@ -369,36 +358,14 @@ def create_client_pool():
         close_all=close_all,
     )
 
-def create_client_api(pool, conf: cm.Conf, log):
-    """Create a high-level API for controlling client connections.
-
-    Provides a simplified interface for common IEC 104 operations:
-    - connect: Establish a connection to a server
-    - disconnect: Close an existing connection
-    - startdt: Send STARTDT to begin data transmission
-    - gi: Send general interrogation command
-    - list_sessions: List all active sessions
-
-    Args:
-        pool: Session pool manager from create_client_pool().
-        conf: Global configuration object.
-        log: Logger for API events.
-
-    Returns:
-        SimpleNamespace with API methods.
-
-    Example:
-        >>> api = create_client_api(pool, conf, log)
-        >>> api.connect("plc1", "192.168.1.10", 2404, 1)
-        >>> api.startdt("plc1")
-        >>> api.gi("plc1")
-    """
+def create_client_api(pool, conf: cm.Conf, log, on_data=None):
+    """Create a high-level API for controlling client connections."""
     api = SimpleNamespace()
 
     def connect(name: str, ip: str, port: int, ca: int):
         if len(pool.list_sessions()) >= MAX_CONNECTIONS:
             raise ValueError(f"Connection limit reached: {MAX_CONNECTIONS}")
-        state, send_t, recv_t = start_session(name, ip, int(port), int(ca), conf, log)
+        state, send_t, recv_t = start_session(name, ip, int(port), int(ca), conf, log, on_data)
         pool.add_session(name, state, (send_t, recv_t))
 
     def disconnect(name: str):
@@ -409,7 +376,7 @@ def create_client_api(pool, conf: cm.Conf, log):
         state = pool.get_state(name)
         if not state:
             raise ValueError(f"Session {name} not found")
-        state.out_que.put(b"\x68\x04\x07\x00\x00\x00")
+        state.out_que.put(const.STARTDT_ACT)
 
     def gi(name: str):
         state = pool.get_state(name)
@@ -425,21 +392,20 @@ def create_client_api(pool, conf: cm.Conf, log):
     api.startdt = startdt
     api.gi = gi
     api.list_sessions = pool.list_sessions
+    api.load_config = cm.load_connections
     return api
 
-def run_client_loop(stop_thread: Event):
-    """Main client loop that runs until stop event is set.
-
-    This simple loop just checks the stop event periodically. It exists
-    primarily to keep the main thread alive while waiting for the stop
-    signal.
-
-    Args:
-        stop_thread: Event to signal when the client should stop.
-    """
+def run_client_loop(stop_thread: Event, pool=None, log=None):
+    """Main client loop with dead session detection."""
     try:
         while not stop_thread.is_set():
-            time.sleep(0.2)
+            time.sleep(1.0)
+            if pool:
+                for name, (state, _) in list(pool.list_sessions().items()):
+                    if state.stop_event.is_set():
+                        pool.remove_session(name)
+                        if log:
+                            log.warning(f"Session {name} disconnected, removed")
     except KeyboardInterrupt:
         stop_thread.set()
 
@@ -455,27 +421,34 @@ def shutdown_client(stop_thread: Event, pool, log):
     """    
     stop_thread.set()
     pool.close_all()
-    log.info("the client is stoped")
+    log.info("Client stopped")
 
 def main():
-    """Main entry point for the client application.
-
-    Initializes configuration, logging, creates the session pool and API,
-    starts the command handler thread, and runs the main client loop.
-
-    The client will run until interrupted by Ctrl+C or until the stop
-    event is set via the command handler.
-    """
+    """Main entry point for the client application."""
     conf = cm.load_config()
     log = cm.setup_logging(conf)
     stop_thread = Event()
     pool = create_client_pool()
-    api = create_client_api(pool, conf, log)
+    history = create_history_writer(conf.history_file) if conf.history_file else None
+    api = create_client_api(pool, conf, log, history.write if history else None)
+    # Auto-connect from config
+    for c in cm.load_connections():
+        try:
+            api.connect(c.name, c.ip, c.port, c.ca)
+            log.info(f"Auto-connected: {c.name} -> {c.ip}:{c.port} ca={c.ca}")
+            if c.auto_start:
+                api.startdt(c.name)
+            if c.auto_gi:
+                api.gi(c.name)
+        except Exception as e:
+            log.error(f"Auto-connect {c.name} failed: {e}")
     Thread(target=client_handler, args=(stop_thread, api, log, conf.log_name), daemon=True).start()
     try:
-        run_client_loop(stop_thread)
+        run_client_loop(stop_thread, pool, log)
     finally:
         shutdown_client(stop_thread, pool, log)
+        if history:
+            history.close()
 
 if __name__ == "__main__":
     main()

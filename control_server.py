@@ -66,27 +66,24 @@ def _cmd_addr(ctx, args):
         > addr pressure_1
         IOA:45 VALUE:100.50 QUAL:0 TS:2024-01-15 10:23:45
     """
-    print('!!', args[0])
     cm.print_signals(ctx.sg.get_signal_by_name(args[0]))
 
 
 def _cmd_set(ctx, args):
     """
-    set <value> <id> <quality> - Set signal by ID.
+    set <value> <id> [quality] - Set signal by ID.
 
     Arguments:
         value   : Numeric value (float)
         id      : Signal ID (database number)
-        quality : Quality (0=good, 1=invalid, 2=not topical)
+        quality : Optional, decimal (default 0)
+                  0=good, 128=invalid, 64=not topical, 16=blocked, 32=substituted
 
     Example:
-        > set 100.5 45 0
-        OK: IOA 45 = 100.5 (quality=0)
-
-    Note:
-        Quality is passed in binary format (2=0b10)
+        > set 100.5 45
+        > set 100.5 45 128
     """
-    q = int(args[2], 2)
+    q = int(args[2]) if len(args) > 2 else 0
     res = ctx.sg.update_val(float(args[0]), id=int(args[1]), q=q)
     if res:
         cm.print_signals(ctx.sg.get_signal(int(args[1])))
@@ -165,12 +162,13 @@ def _cmd_imit_ladder(ctx, args):
     """
     cnt_step = int(args[0])
     time_step, val_step, val_min, val_max = float(args[1]), float(args[2]), float(args[3]), float(args[4])
-    list_id = []
+    signals = ctx.sg.get_signal_by_name(args[5])
+    list_id = [key for key, sg in signals.items() if sg.asdu == 36]
+    if not list_id:
+        print('No matching analog signals (ASDU=36) found')
+        return
 
     def run():
-        for key, sg in ctx.sg.get_signal_by_name(args[5]).items():
-            if sg.asdu == 36:
-                list_id.append(key)
         for _, sid, val, q in im.imit_ladder(
             cnt_step=cnt_step,
             time_step=time_step,
@@ -245,7 +243,7 @@ COMMANDS = {
     "exit": (0, _cmd_exit),
     "clients": (0, _cmd_clients),
     "addr": (1, _cmd_addr),
-    "set": (3, _cmd_set),
+    "set": (2, _cmd_set),
     "setioa": (2, _cmd_setioa),
     "imit_rand": (2, _cmd_imit_rand),
     "imit_ladder": (6, _cmd_imit_ladder),
@@ -298,8 +296,8 @@ def server_handler(stop_thread: Callable, cl: Callable, sg: Callable, log, promp
             print('Unknown command. help — list of commands.')
             continue
         n_args, handler = entry
-        if len(args) != n_args:
-            print(f'Expected {n_args} args for {cmd_name}, got {len(args)}. help — list of commands.')
+        if len(args) < n_args:
+            print(f'Expected at least {n_args} args for {cmd_name}, got {len(args)}. help — list of commands.')
             continue
         try:
             if handler(ctx, args):
