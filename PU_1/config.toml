@@ -19,8 +19,8 @@ sc = "sc.csv"
 addr = "signals.csv"
 
 [log]
-name = "DRV"
-file_lvl = "DEBUG"
+name = "SRV"
+file_lvl = "INFO"
 console_lvl = ""
 fname = "srv.log"
 backup = 5  # Количество сохраняемых файлов при ротации

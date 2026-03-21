@@ -1,80 +1,108 @@
-# Симулятор полевого уровня МЭК 60870-5-104
+# drv60870
 
-Симулятор КП (контроллеров/РТУ) по протоколу ГОСТ Р МЭК 60870-5-104 для проверки SCADA (WinCC OA и аналоги). Учебный проект: изучение протокола 104, Python, инструменты тестирования.
+A project for GOST R IEC 60870-5-104 communication with no external dependencies:
 
-## Общие характеристики
+- `server.py` — server (RTU/slave)
+- `client.py` — client (SCADA/master, up to 8 connections to RTUs)
 
-- Стиль: императивный, замыкания для инкапсуляции состояния клиента
-- Параллелизм: 2 потока на клиента (read/write), до 8 подключений (threading)
-- Конфигурация: TOML (сеть, протокол), CSV сигналов (dataclasses)
-- Обмен: потокобезопасные `queue.Queue` и хранилища с `threading.Lock`
+## About the Project
 
-## Структура проекта
+`drv60870` is an educational and practical project for communication according to GOST R IEC 60870-5-104.
+The project includes two roles:
 
-```
+- `server.py` — RTU simulator (slave), accepts SCADA connections and provides telemetry/accepts commands
+- `client.py` — SCADA client (master), connects to RTUs, performs STARTDT and general interrogation
+
+The main goal is a local test bench for 104 communication verification and SCADA scenario debugging without external dependencies.
+
+## Requirements
+
+- Python 3.10+
+- Python standard library only
+
+## Project Structure
+
+```text
 drv60870/
-├── client.py       # тестовый TCP-клиент (клиент 104 — опционально)
-├── common.py       # конфиг, хранилища, загрузка сигналов
-├── const.py        # константы протокола МЭК 60870-5-104
-├── imit.py         # генераторы имитации (float, сценарии)
-├── protocol.py     # разбор/сборка кадров 104
-├── server.py       # сервер (slave/КП), приём и отправка данных
-├── log_viewer.py   # просмотр логов
-├── timer.py        # таймеры (при необходимости)
+├── client.py          # IEC-104 client (up to 8 connections, CLI)
+├── server.py          # IEC-104 server (accepts SCADA connections)
+├── protocol.py        # I/S/U frame and ASDU parsing/building
+├── const.py           # protocol constants
+├── common.py          # config, state, storage, signal loading
+├── control_server.py  # server CLI commands
+├── control_client.py  # client CLI commands
+├── imit.py            # signal simulation generators
+├── log_viewer.py      # log viewer
+├── gen_dpl.py         # DPL generator
+├── test.py            # local testing utilities
 ├── docs/
-│   └── plans/      # планы и оценки (например 2025-03-14-assessment-and-goals.md)
-├── KP_1/, KP_2/    # каталоги под каждое КП
-│   ├── config.toml # порт, allow_ip, ca, t3, w, k, max_rx_buf, send_sleep, i_frame_stats_every, sg_addr, лог
-│   ├── signals.csv # id, ca, ioa, asdu, name, val, threshold
-│   └── srv.log     # лог работы экземпляра
-├── todo.md         # список доработок
-└── README.md       # этот файл
+│   ├── plans/
+│   └── help.md
+├── KP_1/, KP_2/       # RTU instance directories
+│   ├── config.toml
+│   ├── signals.csv
+│   └── srv.log
+└── README.md
 ```
 
-## Сервер (симулятор КП)
+## Configuration
 
-Сервер в роли slave/КП: принимает соединения от SCADA, отвечает на U-кадры (STARTDT/STOPDT/TESTFR), принимает и отправляет I- и S-кадры. Реализованы: ответ на общий опрос (C_IC_NA_1) с выгрузкой сигналов и ACT_TERM; запись ТУ (C_SC_NA_1) в хранилище через колбэк `on_command`; ограничение по k (не более k неподтверждённых I-кадров); отправка S-кадров по параметру w после приёма w I-кадров.
+- `config.toml`:
+  - network: `bind_ip`, `port`, `allow_ip`, `max_clients`
+  - protocol: `ca`, `t3`, `k`, `w`, `strict_coa`, `max_rx_buf`
+  - logging: name, file, levels, rotation
+- `signals.csv`:
+  - signal fields: `id`, `ca`, `ioa`, `asdu`, `name`, `val`, `threshold`
 
-- Загрузка конфигурации из `config.toml` и сигналов из `signals.csv` (колонка `threshold` — порог изменения для рассылки)
-- Прослушивание порта, фильтр по `allow_ip`, TCP_NODELAY
-- Реестр CLI-команд: exit, clients, addr, set &lt;val&gt; &lt;id&gt;, setioa &lt;val&gt; &lt;ioa&gt;, imit, help
+`strict_coa`:
 
-## Запуск
+- `true` — strict mode: incoming ASDU is ignored when COA does not match.
+- `false` — compatible mode: GI (`C_IC_NA_1`) is accepted even with COA mismatch; other ASDUs are ignored.
 
-Запуск из каталога КП (например `KP_1`). Конфиг и лог — в этом каталоге; модули драйвера — в корне проекта.
+## Running
 
-Текущая оценка и приоритеты доработок: [docs/plans/2025-03-14-assessment-and-goals.md](docs/plans/2025-03-14-assessment-and-goals.md). Список задач — [todo.md](todo.md).
+Run from the specific RTU directory (e.g., `KP_1`) to use local `config.toml` and `signals.csv`.
 
-## Объективный отзыв о реализации
+Server:
 
-**Плюсы.** Разделение ролей выдержано: `protocol.py` — разбор/сборка кадров без побочных эффектов; `common.py` — конфиг, хранилища, загрузка сигналов; `server.py` — оркестрация потоков и сокетов. Хранилище сигналов потокобезопасно (Lock), подписка/отписка клиентов на события реализована понятно. Завершение работы: Event, settimeout на recv, закрытие сокетов в finally — корректно. U-кадры обрабатываются полностью; парсинг I-кадров учитывает формат ASDU (последовательный/непоследовательный). Кодирование CP56 вынесено в отдельные функции. Конфиг через TOML и CSV без лишних зависимостей. После прошлых правок устранены типичные ошибки (циклический импорт, копия в get_all, проверка allow_ip, конкретные исключения).
+- `python ../server.py`
 
-**Минусы и риски.** Проверка COA в приходящих ASDU закомментирована; при несовпадении CA симулятор может обрабатывать чужой трафик. Загрузка сигналов вызывается с дефолтным путём к CSV (запуск из каталога КП); `conf.sg_addr` в main не передаётся в load_signal. Нет автоматических тестов; регрессии проверяются вручную. В продакшене assert в горячих путях лучше заменить на проверки с логированием.
+Client:
 
-**Итог.** Реализация достаточна для учебного симулятора и ручной проверки SCADA по 104: подключение, обмен, подписка на события, ответ на общий опрос (C_IC_NA_1) с выгрузкой сигналов и ACT_TERM, запись ТУ (C_SC_NA_1) в хранилище работают. Для уверенной автоматизированной проверки полезны доработки из todo (сценарии имитации, документация). Код читаемый, без избыточной абстракции; для переиспользования в другом проекте потребуется вынести точки расширения (обработчики типов ASDU, источник сигналов).
+- `python ../client.py`
 
-## Сравнение с альтернативами (Rust/Go + OPC-UA + Web API)
+## CLI Commands
 
-Сравнение — по ролям: **104** используется для проверок SCADA (опрос, ТУ, общий опрос); **OPC-UA и Web API** в симуляторе на Rust — не для проверок, а для **подключения к данным** (веб-панели, аналитика, сторонние клиенты читают/пишут те же данные, что отдаются по 104).
+Server (`control_server.py`):
 
-| Критерий | Python + IEC 60870-5-104 (этот проект) | Rust/Go + 104 + OPC-UA + Web API |
-|----------|----------------------------------------|-----------------------------------|
-| **Проверки SCADA** | Нативный 104 — то, по чему опрашивают WinCC OA и многие российские SCADA | 104 тоже нужен для проверок; OPC-UA/REST его не заменяют |
-| **Доступ к данным** | Только по 104; свой REST/OPC-UA — отдельно | OPC-UA сервер и Web API — для подключения к данным симулятора (дашборды, тесты по HTTP, внешние системы) |
-| **Скорость разработки** | Выше: меньше кода, быстрые правки, удобно для разбора формата кадров | Ниже: строгая типизация, сборка, больше кода |
-| **Изучение протокола** | Удобно: разбор байтов в protocol.py, быстрые эксперименты | Возможно; чаще опора на готовые библиотеки 104/OPC-UA |
-| **Производительность** | Достаточна для симулятора (десятки КП, умеренный трафик) | Выше при большом числе соединений или жёстких требованиях к латентности/памяти |
-| **Деплой** | Нужен Python и зависимости | Один бинарник, но из-за сторонних библиотек типично всё в контейнерах |
-| **Стенд со многими КП (например 100)** | Легко: 100 процессов, один образ/окружение, без оркестрации контейнеров; конфиг — каталоги KP_1…KP_N | Громоздко: 100 контейнеров (или один мультиинстанс с пробросом портов), образы, реестр, ресурсы на каждый контейнер; для симулятора полевого уровня избыточно |
+- `clients`
+- `addr <name_pattern>`
+- `set <value> <id> <quality_bin>`
+- `setioa <value> <ioa>`
+- `imit_rand <cnt_time> <cnt_id>`
+- `imit_ladder <cnt_step> <time_step> <val_step> <val_min> <val_max> <name_pattern>`
+- `log_level <file|console> <DEBUG|INFO|WARNING|ERROR|CRITICAL>`
+- `help`, `exit`
 
-**Почему выбран текущий стек.** Задача — симулятор для проверки SCADA по **104** и учебный проект. Проверки делаются по 104; OPC-UA в таком симуляторе нужен не для проверок, а чтобы дать **подключение к данным** (одни и те же сигналы — по 104 для SCADA и по OPC-UA/REST для панелей, скриптов и т.д.). Текущий вариант: только 104, быстрый вход в протокол, один язык для симулятора и сценариев. Добавлять OPC-UA/Web API сюда — значит усложнять стек без обязательной выгоды, пока не требуется единая точка доступа к данным по разным протоколам.
+Client (`control_client.py`):
 
-**Когда имеет смысл переходить на Rust или Go и добавлять OPC-UA.** Имеет смысл рассматривать симулятор на Rust/Go с OPC-UA, если: (1) нужен **единый источник данных** по 104 и OPC-UA/REST; (2) жёсткие требования по памяти или задержкам при малом числе инстансов; (3) встраивание в систему на Go/Rust. Вариант на Rust опирается на сторонние библиотеки и обычно уходит в контейнеры — для **стенда со 100 КП** это громоздко (100 контейнеров, образы, оркестрация), тогда как текущий Python-вариант даёт 100 процессов в одном окружении без контейнерного оверхеда. Для учебного стенда и проверки SCADA по 104 текущий стек обычно удобнее.
+- `conn <name> <ip> <port> <ca>`
+- `start <name>`
+- `gi <name>`
+- `disc <name>`
+- `clients`
+- `help`, `exit`
 
----
+## Supported Communication
 
-**Попробуйте.** Запустите симулятор из каталога КП, подключите WinCC OA или другую SCADA по 104 — общий опрос, ТИ, ТУ и телерегулирование работают из коробки. Код открыт: можно разобрать протокол по строкам, добавить свои типы ASDU или сценарии имитации и использовать проект как стенд для тестов и как трамплин для изучения телемеханики и Python.
+- U-frames: `STARTDT`, `STOPDT`, `TESTFR`
+- I/S-frames: acknowledgments by `w`, limitation by `k`
+- Commands:
+  - `C_IC_NA_1` (general interrogation)
+  - `C_SC_NA_1` (single command)
+  - `C_SE_NC_1` (floating-point setpoint)
 
-## Примечания
+## Notes
 
-Имена тэгов регистронезависимы.
+- Signal names are case-insensitive during search.
+  

@@ -9,6 +9,7 @@ ca = 3
 t3 = 10
 k = 12
 w = 8
+strict_coa = true
 max_rx_buf = 16384
 send_sleep = 0
 
